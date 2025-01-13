@@ -9,13 +9,14 @@ from langchain.chat_models import ChatOpenAI
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
 from datetime import datetime
 
+# Streamlit 페이지 설정 (가장 첫 번째 명령어)
+st.set_page_config(
+    page_title="벼락치기 도우미",
+    page_icon="⏳",
+)
 
 # Streamlit 앱 설정
 def main():
-    st.set_page_config(
-        page_title="벼락치기 도우미",
-        page_icon="⏳",
-    )
     st.title("⏳ 대학생 벼락치기 도우미")
 
     if "uploaded_text" not in st.session_state:
@@ -107,7 +108,7 @@ def extract_text_from_files(files):
 # 텍스트 청크로 분할
 def split_text_into_chunks(text):
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
+        chunk_size=800,  # 청크 크기를 줄임
         chunk_overlap=100
     )
     return text_splitter.split_documents(text)
@@ -120,7 +121,7 @@ def create_vectorstore(text_chunks):
 
 
 # 텍스트 요약
-def summarize_text(text_chunks, llm):
+def summarize_text(text_chunks, llm, max_summary_length=1000):
     summaries = []
     for chunk in text_chunks:
         text = chunk.page_content
@@ -130,11 +131,14 @@ def summarize_text(text_chunks, llm):
         ]
         response = llm(messages)
         summaries.append(response.content)
-    return "\n".join(summaries)
+    combined_summary = "\n".join(summaries)
+    return combined_summary[:max_summary_length] + "..." if len(combined_summary) > max_summary_length else combined_summary
 
 
 # 공부 로드맵 생성
-def create_study_roadmap(summary, llm, days_left):
+def create_study_roadmap(summary, llm, days_left, max_summary_length=1000):
+    if len(summary) > max_summary_length:
+        summary = summary[:max_summary_length] + "..."
     messages = [
         SystemMessage(content="You are a helpful assistant that creates study plans."),
         HumanMessage(content=f"""
@@ -161,9 +165,3 @@ def generate_quiz_questions(summary, llm):
 
 if __name__ == "__main__":
     main()
-
-
-
-if __name__ == "__main__":
-    main()
-
