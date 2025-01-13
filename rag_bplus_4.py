@@ -4,10 +4,8 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import FAISS
 from langchain.chat_models import ChatOpenAI
-from langchain.chains.summarize import load_summarize_chain
 from langchain.prompts import PromptTemplate
-from datetime import datetime, timedelta
-import time
+from datetime import datetime
 
 
 # Streamlit 앱 설정
@@ -110,17 +108,16 @@ def create_vectorstore(text_chunks):
 
 # 텍스트 요약
 def summarize_text(text_chunks, llm):
-    # Summarization with a PromptTemplate
-    summarization_prompt = PromptTemplate(
+    text = " ".join([chunk.page_content for chunk in text_chunks])
+    summarize_prompt = PromptTemplate(
         input_variables=["text"],
         template="Summarize the following text:\n\n{text}"
     )
-    text = " ".join([chunk.page_content for chunk in text_chunks])
-    response = llm(summarization_prompt.format(text=text))
-    return response["text"]
+    response = llm(summarize_prompt.format(text=text))
+    return response["choices"][0]["message"]["content"]
 
 
-# 공부 로드맵 생성 (시험일까지 남은 기간을 고려)
+# 공부 로드맵 생성
 def create_study_roadmap(summary, llm, days_left):
     roadmap_prompt = f"""
     다음 텍스트를 기반으로 {days_left}일 동안 효과적으로 공부할 계획을 만들어주세요:
@@ -130,7 +127,8 @@ def create_study_roadmap(summary, llm, days_left):
     - 학습 계획을 하루 단위로 작성하세요.
     {summary}
     """
-    return llm(roadmap_prompt)["text"]
+    response = llm(roadmap_prompt)
+    return response["choices"][0]["message"]["content"]
 
 
 # 예상 문제 생성
@@ -140,7 +138,8 @@ def generate_quiz_questions(summary, llm):
     {summary}
     - 각 질문은 구체적이고 명확하게 작성
     """
-    return llm(quiz_prompt)["text"]
+    response = llm(quiz_prompt)
+    return response["choices"][0]["message"]["content"]
 
 
 if __name__ == "__main__":
