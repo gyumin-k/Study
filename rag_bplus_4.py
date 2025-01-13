@@ -4,7 +4,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import FAISS
 from langchain.chat_models import ChatOpenAI
-from langchain.chains import load_summarize_chain
+from langchain.chains.summarize import load_summarize_chain
 from langchain.prompts import PromptTemplate
 from datetime import datetime, timedelta
 import time
@@ -110,8 +110,14 @@ def create_vectorstore(text_chunks):
 
 # 텍스트 요약
 def summarize_text(text_chunks, llm):
-    summarization_chain = load_summarize_chain(llm, chain_type="map_reduce")
-    return summarization_chain.run(text_chunks)
+    # Summarization with a PromptTemplate
+    summarization_prompt = PromptTemplate(
+        input_variables=["text"],
+        template="Summarize the following text:\n\n{text}"
+    )
+    text = " ".join([chunk.page_content for chunk in text_chunks])
+    response = llm(summarization_prompt.format(text=text))
+    return response["text"]
 
 
 # 공부 로드맵 생성 (시험일까지 남은 기간을 고려)
@@ -124,25 +130,17 @@ def create_study_roadmap(summary, llm, days_left):
     - 학습 계획을 하루 단위로 작성하세요.
     {summary}
     """
-    prompt = PromptTemplate(
-        input_variables=["summary"],
-        template=roadmap_prompt
-    )
-    return llm(prompt.format(summary=summary))
+    return llm(roadmap_prompt)["text"]
 
 
 # 예상 문제 생성
 def generate_quiz_questions(summary, llm):
-    quiz_prompt = """
+    quiz_prompt = f"""
     다음 텍스트를 기반으로 시험에 나올 수 있는 5개의 예상 문제를 만들어주세요:
     {summary}
     - 각 질문은 구체적이고 명확하게 작성
     """
-    prompt = PromptTemplate(
-        input_variables=["summary"],
-        template=quiz_prompt
-    )
-    return llm(prompt.format(summary=summary))
+    return llm(quiz_prompt)["text"]
 
 
 if __name__ == "__main__":
