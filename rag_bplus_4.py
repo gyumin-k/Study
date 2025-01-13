@@ -1,6 +1,7 @@
 import tempfile
 import os
 import streamlit as st
+from concurrent.futures import ThreadPoolExecutor
 from langchain.document_loaders import PyPDFLoader, Docx2txtLoader, UnstructuredPowerPointLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings import HuggingFaceEmbeddings
@@ -33,6 +34,9 @@ def main():
         openai_api_key = st.text_input("🔑 OpenAI API 키", type="password")
         exam_date = st.date_input("📅 시험 날짜를 선택하세요")
         process_button = st.button("🚀 벼락치기 시작하기")
+        create_summary = st.checkbox("핵심 요약 생성", value=True)
+        create_roadmap = st.checkbox("공부 로드맵 생성", value=True)
+        create_quiz = st.checkbox("예상 문제 생성", value=True)
 
     if process_button:
         if not openai_api_key:
@@ -57,26 +61,26 @@ def main():
         # 벡터 저장소 및 요약 생성
         text_chunks = split_text_into_chunks(st.session_state.uploaded_text)
         vectorstore = create_vectorstore(text_chunks)
-        llm = ChatOpenAI(openai_api_key=openai_api_key, model_name="gpt-4")  # GPT-4로 변경
+        llm = ChatOpenAI(openai_api_key=openai_api_key, model_name="gpt-4")  # GPT-4 유지
 
-        # 핵심 요약 생성
-        st.session_state.summary = summarize_text(text_chunks, llm)
-
-        # 공부 로드맵 생성
-        st.session_state.roadmap = create_study_roadmap(st.session_state.summary, llm, days_left)
-
-        # 예상 문제 생성
-        st.session_state.quiz = generate_quiz_questions(st.session_state.summary, llm)
+        # 선택적으로 단계 실행
+        if create_summary:
+            st.session_state.summary = summarize_text(text_chunks, llm)
+        if create_roadmap:
+            st.session_state.roadmap = create_study_roadmap(st.session_state.summary, llm, days_left)
+        if create_quiz:
+            st.session_state.quiz = generate_quiz_questions(st.session_state.summary, llm)
 
     if st.session_state.uploaded_text:
-        st.subheader("📌 핵심 요약")
-        st.markdown(st.session_state.summary)
-
-        st.subheader("📋 공부 로드맵")
-        st.markdown(st.session_state.roadmap)
-
-        st.subheader("❓ 예상 문제")
-        st.markdown(st.session_state.quiz)
+        if create_summary:
+            st.subheader("📌 핵심 요약")
+            st.markdown(st.session_state.summary)
+        if create_roadmap:
+            st.subheader("📋 공부 로드맵")
+            st.markdown(st.session_state.roadmap)
+        if create_quiz:
+            st.subheader("❓ 예상 문제")
+            st.markdown(st.session_state.quiz)
 
 
 # 파일에서 텍스트 추출
@@ -108,7 +112,7 @@ def extract_text_from_files(files):
 # 텍스트 청크로 분할
 def split_text_into_chunks(text):
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=2000,  # GPT-4는 더 큰 컨텍스트를 처리할 수 있으므로 크기 증가
+        chunk_size=3000,  # 크기 증가로 처리량 감소
         chunk_overlap=200
     )
     return text_splitter.split_documents(text)
@@ -120,17 +124,20 @@ def create_vectorstore(text_chunks):
     return FAISS.from_documents(text_chunks, embeddings)
 
 
-# 텍스트 요약
+# 텍스트 요약 (병렬 처리 적용)
 def summarize_text(text_chunks, llm, max_summary_length=2000):
-    summaries = []
-    for chunk in text_chunks:
+    def process_chunk(chunk):
         text = chunk.page_content
         messages = [
             SystemMessage(content="당신은 유능한 한국어 요약 도우미입니다."),
             HumanMessage(content=f"다음 텍스트를 한국어로 요약해주세요:\n\n{text}")
         ]
         response = llm(messages)
-        summaries.append(response.content)
+        return response.content
+
+    with ThreadPoolExecutor(max_workers=4) as executor:  # 병렬 처리
+        summaries = list(executor.map(process_chunk, text_chunks))
+    
     combined_summary = "\n".join(summaries)
     return combined_summary[:max_summary_length] + "..." if len(combined_summary) > max_summary_length else combined_summary
 
