@@ -6,7 +6,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import FAISS
 from langchain.chat_models import ChatOpenAI
-from langchain.prompts import PromptTemplate
+from langchain.schema import AIMessage, HumanMessage, SystemMessage
 from datetime import datetime
 
 
@@ -122,38 +122,40 @@ def create_vectorstore(text_chunks):
 # 텍스트 요약
 def summarize_text(text_chunks, llm):
     text = " ".join([chunk.page_content for chunk in text_chunks])
-    summarize_prompt = PromptTemplate(
-        input_variables=["text"],
-        template="Summarize the following text:\n\n{text}"
-    )
-    response = llm(summarize_prompt.format(text=text))
-    return response["choices"][0]["message"]["content"]
+    messages = [
+        SystemMessage(content="You are a helpful assistant that summarizes text."),
+        HumanMessage(content=f"Summarize the following text:\n\n{text}")
+    ]
+    response = llm(messages)
+    return response.content
 
 
 # 공부 로드맵 생성
 def create_study_roadmap(summary, llm, days_left):
-    roadmap_prompt = f"""
-    다음 텍스트를 기반으로 {days_left}일 동안 효과적으로 공부할 계획을 만들어주세요:
-    - 중요 개념을 먼저 학습하도록 계획하세요.
-    - 매일 학습량을 균등하게 나누되, 복습 시간을 포함하세요.
-    - 마지막 날은 복습 및 예상 문제 풀이에 집중하세요.
-    - 학습 계획을 하루 단위로 작성하세요.
-    {summary}
-    """
-    response = llm(roadmap_prompt)
-    return response["choices"][0]["message"]["content"]
+    messages = [
+        SystemMessage(content="You are a helpful assistant that creates study plans."),
+        HumanMessage(content=f"""
+        다음 텍스트를 기반으로 {days_left}일 동안 효과적으로 공부할 계획을 만들어주세요:
+        {summary}
+        """)
+    ]
+    response = llm(messages)
+    return response.content
 
 
 # 예상 문제 생성
 def generate_quiz_questions(summary, llm):
-    quiz_prompt = f"""
-    다음 텍스트를 기반으로 시험에 나올 수 있는 5개의 예상 문제를 만들어주세요:
-    {summary}
-    - 각 질문은 구체적이고 명확하게 작성
-    """
-    response = llm(quiz_prompt)
-    return response["choices"][0]["message"]["content"]
+    messages = [
+        SystemMessage(content="You are a helpful assistant that generates quiz questions."),
+        HumanMessage(content=f"""
+        다음 텍스트를 기반으로 시험에 나올 수 있는 5개의 예상 문제를 만들어주세요:
+        {summary}
+        """)
+    ]
+    response = llm(messages)
+    return response.content
 
 
 if __name__ == "__main__":
     main()
+
