@@ -1,3 +1,5 @@
+import tempfile
+import os
 import streamlit as st
 from langchain.document_loaders import PyPDFLoader, Docx2txtLoader, UnstructuredPowerPointLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -80,14 +82,25 @@ def main():
 def extract_text_from_files(files):
     doc_list = []
     for file in files:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file.name) as tmp_file:
+            tmp_file.write(file.read())
+            temp_file_path = tmp_file.name
+
         if file.name.endswith(".pdf"):
-            loader = PyPDFLoader(file)
+            loader = PyPDFLoader(temp_file_path)
         elif file.name.endswith(".docx"):
-            loader = Docx2txtLoader(file)
+            loader = Docx2txtLoader(temp_file_path)
         elif file.name.endswith(".pptx"):
-            loader = UnstructuredPowerPointLoader(file)
+            loader = UnstructuredPowerPointLoader(temp_file_path)
+        else:
+            st.warning(f"Unsupported file type: {file.name}")
+            continue
+
         documents = loader.load_and_split()
         doc_list.extend(documents)
+
+        # 임시 파일 삭제
+        os.remove(temp_file_path)
     return doc_list
 
 
