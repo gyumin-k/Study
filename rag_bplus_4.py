@@ -108,7 +108,7 @@ def extract_text_from_files(files):
 def split_text_into_chunks(text):
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
-        chunk_overlap=200
+        chunk_overlap=100
     )
     return text_splitter.split_documents(text)
 
@@ -121,13 +121,16 @@ def create_vectorstore(text_chunks):
 
 # 텍스트 요약
 def summarize_text(text_chunks, llm):
-    text = " ".join([chunk.page_content for chunk in text_chunks])
-    messages = [
-        SystemMessage(content="You are a helpful assistant that summarizes text."),
-        HumanMessage(content=f"Summarize the following text:\n\n{text}")
-    ]
-    response = llm(messages)
-    return response.content
+    summaries = []
+    for chunk in text_chunks:
+        text = chunk.page_content
+        messages = [
+            SystemMessage(content="You are a helpful assistant that summarizes text."),
+            HumanMessage(content=f"Summarize the following text:\n\n{text}")
+        ]
+        response = llm(messages)
+        summaries.append(response.content)
+    return "\n".join(summaries)
 
 
 # 공부 로드맵 생성
@@ -154,6 +157,11 @@ def generate_quiz_questions(summary, llm):
     ]
     response = llm(messages)
     return response.content
+
+
+if __name__ == "__main__":
+    main()
+
 
 
 if __name__ == "__main__":
