@@ -34,12 +34,17 @@ def extract_text_from_file(file):
 
 # 텍스트 요약
 def summarize_text(text, llm, max_summary_length=2000):
-    messages = [
-        SystemMessage(content="당신은 유능한 한국어 요약 도우미입니다."),
-        HumanMessage(content=f"다음 텍스트를 요약해주세요:\n\n{text}")
-    ]
-    response = llm(messages)
-    return response.content[:max_summary_length] + "..." if len(response.content) > max_summary_length else response.content
+    chunks = [text[i:i + 3000] for i in range(0, len(text), 3000)]  # 텍스트를 나눔
+    summaries = []
+    for chunk in chunks:
+        messages = [
+            SystemMessage(content="당신은 유능한 한국어 요약 도우미입니다."),
+            HumanMessage(content=f"다음 텍스트를 요약해주세요:\n\n{chunk}")
+        ]
+        response = llm(messages)
+        summaries.append(response.content[:max_summary_length])
+
+    return "\n".join(summaries)
 
 # 기출문제 형식 추출
 def extract_exam_format(text, llm):
@@ -56,7 +61,6 @@ def extract_exam_format(text, llm):
 
 # 예상 문제 생성
 def generate_quiz_questions(summary, exam_format, llm, max_chunk_size=2000):
-    # 텍스트를 청크로 분할
     chunks = [summary[i:i + max_chunk_size] for i in range(0, len(summary), max_chunk_size)]
     quiz_results = []
 
@@ -152,3 +156,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
