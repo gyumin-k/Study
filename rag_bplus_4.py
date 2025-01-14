@@ -4,10 +4,11 @@ import streamlit as st
 from concurrent.futures import ThreadPoolExecutor
 from langchain.document_loaders import PyPDFLoader, Docx2txtLoader, UnstructuredPowerPointLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.embeddings import OpenAIEmbeddings
+from langchain.vectorstores import FAISS
 from langchain.chat_models import ChatOpenAI
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
-from rouge_score import rouge_scorer
-from langdetect import detect_langs
+from datetime import datetime
 
 # Streamlit 페이지 설정
 st.set_page_config(
@@ -39,7 +40,6 @@ def main():
         create_summary = st.checkbox("핵심 요약 생성", value=True)
         create_roadmap = st.checkbox("공부 로드맵 생성", value=True)
         create_quiz = st.checkbox("예상 문제 생성", value=True)
-        show_metrics = st.checkbox("요약 성능 평가 표시", value=True)
 
     # 기능별 처리
     if process_button:
@@ -53,6 +53,7 @@ def main():
         # 파일에서 텍스트 추출
         st.session_state.uploaded_text = extract_text_from_files(uploaded_files)
         text_chunks = split_text_into_chunks(st.session_state.uploaded_text)
+        vectorstore = create_vectorstore(text_chunks, openai_api_key)
         llm = ChatOpenAI(openai_api_key=openai_api_key, model_name="gpt-4")
 
         # 핵심 요약 생성
@@ -67,13 +68,6 @@ def main():
         if create_quiz and st.session_state.summary:
             st.session_state.quiz = generate_quiz_questions(st.session_state.summary, llm)
 
-        # 요약 성능 평가
-        if show_metrics and st.session_state.summary:
-            st.subheader("📊 요약 성능 평가")
-            metrics = evaluate_summary(st.session_state.uploaded_text, st.session_state.summary)
-            for metric, score in metrics.items():
-                st.write(f"**{metric}:** {score:.2f}")
-
     # 결과 출력
     if st.session_state.summary:
         st.subheader("📌 핵심 요약")
@@ -87,7 +81,8 @@ def main():
         st.subheader("❓ 예상 문제")
         st.markdown(st.session_state.quiz)
 
-# 텍스트 추출 함수
+
+# 파일에서 텍스트 추출
 def extract_text_from_files(files):
     doc_list = []
     for file in files:
@@ -110,74 +105,63 @@ def extract_text_from_files(files):
         os.remove(temp_file_path)
     return doc_list
 
-# 텍스트 청크로 분할 함수
+# 텍스트 청크로 분할
 def split_text_into_chunks(text):
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1500,
-        chunk_overlap=300
+        chunk_size=2000,  # 청크 크기 설정 (첨부 PDF 문서 기반으로 조정)
+        chunk_overlap=300  # 중복 설정
     )
     return text_splitter.split_documents(text)
 
-# 요약 생성 함수
+# 벡터 저장소 생성 (OpenAI 임베딩 사용)
+def create_vectorstore(text_chunks, openai_api_key):
+    embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
+    return FAISS.from_documents(text_chunks, embeddings)
+
+# 텍스트 요약 (병렬 처리 적용)
 def summarize_text(text_chunks, llm, max_summary_length=2000):
     def process_chunk(chunk):
         text = chunk.page_content
-        detected_languages = detect_langs(text)
-        if any(lang.lang == "ko" and lang.prob > 0.5 for lang in detected_languages):
-            system_prompt = "당신은 유능한 한국어 요약 도우미입니다."
-            human_prompt = f"""
-            다음 텍스트를 한국어로 요약해주세요:
-            1. 핵심 주제만 간결히 포함
-            2. 중요 키워드를 강조
-            3. 불필요한 정보 및 중복 제거
-            텍스트:\n\n{text}
-            """
-        else:
-            system_prompt = "You are a skilled English summarization assistant."
-            human_prompt = f"""
-            Please summarize the following text:
-            1. Include only the main points.
-            2. Highlight important keywords.
-            3. Remove unnecessary details and redundancy.
-            Text:\n\n{text}
-            """
         messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=human_prompt)
+            SystemMessage(content="당신은 유능한 한국어 요약 도우미입니다."),
+            HumanMessage(content=f"다음 텍스트를 한국어로 요약해주세요:\n\n{text}")
         ]
         response = llm(messages)
         return response.content
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=4) as executor:  # 병렬 처리
         summaries = list(executor.map(process_chunk, text_chunks))
 
-    # 후처리로 요약문 정리
-    return refine_summary(summaries, llm)
-
-# 병렬 처리된 요약문 후처리 함수
-def refine_summary(summaries, llm):
     combined_summary = "\n".join(summaries)
+    return combined_summary[:max_summary_length] + "..." if len(combined_summary) > max_summary_length else combined_summary
+
+# 공부 로드맵 생성
+def create_study_roadmap(summary, llm, days_left, max_summary_length=2000):
+    if len(summary) > max_summary_length:
+        summary = summary[:max_summary_length] + "..."
     messages = [
-        SystemMessage(content="당신은 요약문을 정리하고 간결하게 만드는 도우미입니다."),
-        HumanMessage(content=f"다음 요약문들을 읽고 하나의 일관된 요약문으로 정리해주세요:\n\n{combined_summary}")
+        SystemMessage(content="당신은 한국 대학생을 위한 유능한 공부 로드맵 작성 도우미입니다."),
+        HumanMessage(content=f"""
+        다음 텍스트를 기반으로 {days_left}일 동안 한국 대학생들이 효과적으로 공부할 수 있는 계획을 작성해주세요:
+        {summary}
+        """)
     ]
     response = llm(messages)
     return response.content
 
-# 요약 성능 평가 함수
-def evaluate_summary(original_text, generated_summary):
-    scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
-    
-    # 원본 텍스트 전체를 하나로 결합
-    original_text_combined = "\n".join([doc.page_content for doc in original_text])
-    
-    # ROUGE 점수 계산
-    scores = scorer.score(original_text_combined, generated_summary)
-    return {
-        "ROUGE-1": scores['rouge1'].fmeasure,
-        "ROUGE-2": scores['rouge2'].fmeasure,
-        "ROUGE-L": scores['rougeL'].fmeasure
-    }
+# 예상 문제 생성
+def generate_quiz_questions(summary, llm):
+    messages = [
+        SystemMessage(content="당신은 한국 대학생을 위한 예상 문제를 작성하는 도우미입니다."),
+        HumanMessage(content=f"""
+        다음 텍스트를 기반으로 중요도를 표시한 10개 이상의 예상 문제를 작성해주세요:
+        {summary}
+        - 예상 문제는 명확하고 구체적으로 작성해주세요.
+        - 각 문제에는 중요도를 '높음', '중간', '낮음'으로 표시해주세요.
+        """)
+    ]
+    response = llm(messages)
+    return response.content
 
 if __name__ == "__main__":
     main()
