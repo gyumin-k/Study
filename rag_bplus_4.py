@@ -134,12 +134,13 @@ def split_text_into_chunks(text):
     )
     return text_splitter.split_documents(text)
 
+from langdetect import detect_langs  # 언어 감지를 위해 추가
 
-# 텍스트 요약
+# 텍스트 요약 함수 내 수정
 def summarize_text(text_chunks, llm, max_summary_length=2000):
     def process_chunk(chunk):
         text = chunk.page_content
-        detected_languages = detect_langs(text)
+        detected_languages = detect_langs(text)  # 언어 감지
         if any(lang.lang == "ko" and lang.prob > 0.5 for lang in detected_languages):
             system_prompt = "당신은 유능한 한국어 요약 도우미입니다."
             human_prompt = f"""
@@ -177,6 +178,7 @@ def summarize_text(text_chunks, llm, max_summary_length=2000):
     ]
     response = llm(messages)
     return response.content[:max_summary_length] + "..." if len(response.content) > max_summary_length else response.content
+
 
 
 
