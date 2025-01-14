@@ -2,7 +2,6 @@ import tempfile
 import os
 import streamlit as st
 from langchain.document_loaders import PyPDFLoader, Docx2txtLoader, UnstructuredPowerPointLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chat_models import ChatOpenAI
 from langchain.schema import SystemMessage, HumanMessage
 from datetime import datetime
@@ -32,9 +31,13 @@ def extract_text_from_file(file):
     os.remove(temp_file_path)
     return full_text
 
+# 텍스트를 청크로 분할
+def split_text_into_chunks(text, chunk_size=3000):
+    return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+
 # 텍스트 요약
 def summarize_text(text, llm, max_summary_length=2000):
-    chunks = [text[i:i + 3000] for i in range(0, len(text), 3000)]  # 텍스트를 나눔
+    chunks = split_text_into_chunks(text)
     summaries = []
     for chunk in chunks:
         messages = [
@@ -43,27 +46,29 @@ def summarize_text(text, llm, max_summary_length=2000):
         ]
         response = llm(messages)
         summaries.append(response.content[:max_summary_length])
-
     return "\n".join(summaries)
 
 # 기출문제 형식 추출
 def extract_exam_format(text, llm):
-    messages = [
-        SystemMessage(content="당신은 문제지 형식을 분석하는 도우미입니다."),
-        HumanMessage(content=f"""
-        다음 텍스트에서 문제지의 형식을 분석해주세요:
-        {text}
-        형식적인 구조(객관식, 주관식, 보기 형식 등)에 집중해주세요.
-        """)
-    ]
-    response = llm(messages)
-    return response.content
+    chunks = split_text_into_chunks(text)
+    formats = []
+    for chunk in chunks:
+        messages = [
+            SystemMessage(content="당신은 문제지 형식을 분석하는 도우미입니다."),
+            HumanMessage(content=f"""
+            다음 텍스트에서 문제지의 형식을 분석해주세요:
+            {chunk}
+            형식적인 구조(객관식, 주관식, 보기 형식 등)에 집중해주세요.
+            """)
+        ]
+        response = llm(messages)
+        formats.append(response.content)
+    return "\n".join(formats)
 
 # 예상 문제 생성
 def generate_quiz_questions(summary, exam_format, llm, max_chunk_size=2000):
-    chunks = [summary[i:i + max_chunk_size] for i in range(0, len(summary), max_chunk_size)]
+    chunks = split_text_into_chunks(summary, chunk_size=max_chunk_size)
     quiz_results = []
-
     for chunk in chunks:
         messages = [
             SystemMessage(content="당신은 한국 대학생을 위한 예상 문제를 작성하는 도우미입니다."),
@@ -76,7 +81,6 @@ def generate_quiz_questions(summary, exam_format, llm, max_chunk_size=2000):
         ]
         response = llm(messages)
         quiz_results.append(response.content)
-
     return "\n\n".join(quiz_results)
 
 # Streamlit 앱
