@@ -34,6 +34,7 @@ def main():
     with st.sidebar:
         uploaded_files = st.file_uploader("📄 강의 자료 업로드", type=["pdf", "docx", "pptx"], accept_multiple_files=True)
         openai_api_key = st.text_input("🔑 OpenAI API 키", type="password")
+        exam_date = st.date_input("📅 시험 날짜를 선택하세요")  # 시험 날짜 입력
         process_button = st.button("🚀 벼락치기 시작하기")
 
         # 체크박스 설정
@@ -49,6 +50,16 @@ def main():
         if not uploaded_files:
             st.warning("강의 자료를 업로드해주세요!")
             return
+        if not exam_date:
+            st.warning("시험 날짜를 선택해주세요!")
+            return
+
+        # 시험까지 남은 기간 계산
+        today = datetime.now().date()
+        days_left = (exam_date - today).days
+        if days_left <= 0:
+            st.warning("시험 날짜는 오늘 이후여야 합니다!")
+            return
 
         # 파일에서 텍스트 추출
         st.session_state.uploaded_text = extract_text_from_files(uploaded_files)
@@ -60,9 +71,9 @@ def main():
         if create_summary:
             st.session_state.summary = summarize_text(text_chunks, llm)
 
-        # 공부 로드맵 생성
+        # 공부 로드맵 생성 (시험 날짜 기반)
         if create_roadmap and st.session_state.summary:
-            st.session_state.roadmap = create_study_roadmap(st.session_state.summary, llm, days_left=7)
+            st.session_state.roadmap = create_study_roadmap(st.session_state.summary, llm, days_left)
 
         # 예상 문제 생성
         if create_quiz and st.session_state.summary:
@@ -108,7 +119,7 @@ def extract_text_from_files(files):
 # 텍스트 청크로 분할
 def split_text_into_chunks(text):
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=2000,  # 청크 크기 설정 (첨부 PDF 문서 기반으로 조정)
+        chunk_size=2000,  # 청크 크기 설정
         chunk_overlap=300  # 중복 설정
     )
     return text_splitter.split_documents(text)
@@ -135,14 +146,12 @@ def summarize_text(text_chunks, llm, max_summary_length=2000):
     combined_summary = "\n".join(summaries)
     return combined_summary[:max_summary_length] + "..." if len(combined_summary) > max_summary_length else combined_summary
 
-# 공부 로드맵 생성
-def create_study_roadmap(summary, llm, days_left, max_summary_length=2000):
-    if len(summary) > max_summary_length:
-        summary = summary[:max_summary_length] + "..."
+# 공부 로드맵 생성 (시험 날짜 기반)
+def create_study_roadmap(summary, llm, days_left):
     messages = [
         SystemMessage(content="당신은 한국 대학생을 위한 유능한 공부 로드맵 작성 도우미입니다."),
         HumanMessage(content=f"""
-        다음 텍스트를 기반으로 {days_left}일 동안 한국 대학생들이 효과적으로 공부할 수 있는 계획을 작성해주세요:
+        다음 텍스트를 기반으로 {days_left}일 동안 효과적으로 공부할 수 있는 계획을 작성해주세요:
         {summary}
         """)
     ]
