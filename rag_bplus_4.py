@@ -1,13 +1,20 @@
 import tempfile
 import os
 import streamlit as st
+from concurrent.futures import ThreadPoolExecutor
 from langchain.document_loaders import PyPDFLoader, Docx2txtLoader, UnstructuredPowerPointLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import FAISS
 from langchain.chat_models import ChatOpenAI
-from langchain.schema import SystemMessage, HumanMessage
+from langchain.schema import AIMessage, HumanMessage, SystemMessage, Document
 from datetime import datetime
 
 # Streamlit 페이지 설정
-st.set_page_config(page_title="벼락치기 도우미", page_icon="⏳")
+st.set_page_config(
+    page_title="벼락치기 도우미",
+    page_icon="⏳",
+)
 
 # 파일에서 텍스트 추출
 def extract_text_from_file(file):
@@ -31,132 +38,146 @@ def extract_text_from_file(file):
     os.remove(temp_file_path)
     return full_text
 
-# 텍스트를 청크로 분할
-def split_text_into_chunks(text, chunk_size=3000):
-    return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+# 텍스트 청크로 분할
+def split_text_into_chunks(uploaded_text):
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=3000,  # 크기 증가로 처리량 감소
+        chunk_overlap=200
+    )
+    documents = [Document(page_content=text) for text in uploaded_text.values()]
+    return text_splitter.split_documents(documents)
 
-# 텍스트 요약
-def summarize_text(text, llm, max_summary_length=2000):
-    chunks = split_text_into_chunks(text)
-    summaries = []
-    for chunk in chunks:
+# 벡터 저장소 생성
+def create_vectorstore(text_chunks):
+    embeddings = HuggingFaceEmbeddings(model_name="jhgan/ko-sroberta-multitask")
+    return FAISS.from_documents(text_chunks, embeddings)
+
+# 텍스트 요약 (병렬 처리 적용)
+def summarize_text(text_chunks, llm, max_summary_length=2000):
+    def process_chunk(chunk):
+        text = chunk.page_content
         messages = [
             SystemMessage(content="당신은 유능한 한국어 요약 도우미입니다."),
-            HumanMessage(content=f"다음 텍스트를 요약해주세요:\n\n{chunk}")
+            HumanMessage(content=f"다음 텍스트를 한국어로 요약해주세요:\n\n{text}")
         ]
         response = llm(messages)
-        summaries.append(response.content[:max_summary_length])
-    return "\n".join(summaries)
+        return response.content
 
-# 기출문제 형식 추출
-def extract_exam_format(text, llm):
-    chunks = split_text_into_chunks(text)
-    formats = []
-    for chunk in chunks:
-        messages = [
-            SystemMessage(content="당신은 문제지 형식을 분석하는 도우미입니다."),
-            HumanMessage(content=f"""
-            다음 텍스트에서 문제지의 형식을 분석해주세요:
-            {chunk}
-            형식적인 구조(객관식, 주관식, 보기 형식 등)에 집중해주세요.
-            """)
-        ]
-        response = llm(messages)
-        formats.append(response.content)
-    return "\n".join(formats)
+    with ThreadPoolExecutor(max_workers=4) as executor:  # 병렬 처리
+        summaries = list(executor.map(process_chunk, text_chunks))
+    
+    combined_summary = "\n".join(summaries)
+    return combined_summary[:max_summary_length] + "..." if len(combined_summary) > max_summary_length else combined_summary
+
+# 공부 로드맵 생성
+def create_study_roadmap(summary, llm, days_left, max_summary_length=2000):
+    if len(summary) > max_summary_length:
+        summary = summary[:max_summary_length] + "..."
+    messages = [
+        SystemMessage(content="당신은 한국 대학생을 위한 유능한 공부 로드맵 작성 도우미입니다."),
+        HumanMessage(content=f"""
+        다음 텍스트를 기반으로 {days_left}일 동안 한국 대학생들이 효과적으로 공부할 수 있는 계획을 작성해주세요:
+        {summary}
+        """)
+    ]
+    response = llm(messages)
+    return response.content
 
 # 예상 문제 생성
-def generate_quiz_questions(summary, exam_format, llm, max_chunk_size=2000):
-    chunks = split_text_into_chunks(summary, chunk_size=max_chunk_size)
-    quiz_results = []
-    for chunk in chunks:
-        messages = [
-            SystemMessage(content="당신은 한국 대학생을 위한 예상 문제를 작성하는 도우미입니다."),
-            HumanMessage(content=f"""
-            다음 요약된 텍스트를 기반으로 예상 문제를 작성해주세요:
-            {chunk}
-            문제의 형식은 다음에 맞춰주세요:
-            {exam_format}
-            """)
-        ]
-        response = llm(messages)
-        quiz_results.append(response.content)
-    return "\n\n".join(quiz_results)
+def generate_quiz_questions(summary, llm):
+    messages = [
+        SystemMessage(content="당신은 한국 대학생을 위한 예상 문제를 작성하는 도우미입니다."),
+        HumanMessage(content=f"""
+        다음 텍스트를 기반으로 중요도를 표시한 10개 이상의 예상 문제를 작성해주세요:
+        {summary}
+        - 예상 문제는 명확하고 구체적으로 작성해주세요.
+        - 각 문제에는 중요도를 '높음', '중간', '낮음'으로 표시해주세요.
+        """)
+    ]
+    response = llm(messages)
+    return response.content
 
-# Streamlit 앱
+# Streamlit 앱 설정
 def main():
     st.title("⏳ 대학생 벼락치기 도우미")
 
-    if "lecture_text" not in st.session_state:
-        st.session_state.lecture_text = {}
+    if "uploaded_text" not in st.session_state:
+        st.session_state.uploaded_text = {}
 
-    if "exam_format" not in st.session_state:
-        st.session_state.exam_format = None
-
-    if "summary" not in st.session_state:
-        st.session_state.summary = None
+    if "roadmap" not in st.session_state:
+        st.session_state.roadmap = None
 
     if "quiz" not in st.session_state:
         st.session_state.quiz = None
 
-    # Sidebar 설정
+    if "summary" not in st.session_state:
+        st.session_state.summary = {}  # 수정: 요약을 파일별로 저장하도록 초기화
+
     with st.sidebar:
-        st.header("📂 파일 업로드")
-        lecture_files = st.file_uploader("강의자료 업로드", type=["pdf", "docx", "pptx"], accept_multiple_files=True)
-        exam_files = st.file_uploader("기출문제 업로드 (형식만 사용)", type=["pdf", "docx", "pptx"], accept_multiple_files=True)
+        uploaded_files = st.file_uploader("📄 강의 자료 업로드", type=["pdf", "docx", "pptx"], accept_multiple_files=True)
         openai_api_key = st.text_input("🔑 OpenAI API 키", type="password")
-        process_button = st.button("🚀 예상 문제 생성")
+        exam_date = st.date_input("📅 시험 날짜를 선택하세요")
+        process_button = st.button("🚀 벼락치기 시작하기")
+        create_summary = st.checkbox("핵심 요약 생성", value=True)
+        create_roadmap = st.checkbox("공부 로드맵 생성", value=True)
+        create_quiz = st.checkbox("예상 문제 생성", value=True)
+        
+        # 파일별 요약 결과 선택 (다중 선택 가능)
+        selected_files = st.multiselect("요약을 확인할 파일을 선택하세요:", list(st.session_state.summary.keys()))
 
     if process_button:
         if not openai_api_key:
             st.warning("OpenAI API 키를 입력해주세요!")
             return
-
-        if not lecture_files:
-            st.warning("강의자료를 업로드해주세요!")
+        if not uploaded_files:
+            st.warning("강의 자료를 업로드해주세요!")
+            return
+        if not exam_date:
+            st.warning("시험 날짜를 선택해주세요!")
             return
 
-        llm = ChatOpenAI(openai_api_key=openai_api_key, model_name="gpt-4")
+        # 시험까지 남은 기간 계산
+        days_left = (exam_date - datetime.now().date()).days
+        if days_left <= 0:
+            st.warning("시험 날짜는 오늘보다 이후여야 합니다!")
+            return
 
-        # 강의자료 텍스트 추출 및 요약
-        for file in lecture_files:
-            st.session_state.lecture_text[file.name] = extract_text_from_file(file)
+        # 업로드한 파일 텍스트 추출
+        for file in uploaded_files:
+            st.session_state.uploaded_text[file.name] = extract_text_from_file(file)
 
-        lecture_text = "\n".join(st.session_state.lecture_text.values())
-        st.session_state.summary = summarize_text(lecture_text, llm)
+        # 벡터 저장소 및 요약 생성
+        text_chunks = split_text_into_chunks(st.session_state.uploaded_text)
+        vectorstore = create_vectorstore(text_chunks)
+        llm = ChatOpenAI(openai_api_key=openai_api_key, model_name="gpt-4")  # GPT-4 유지
 
-        # 기출문제 형식 추출
-        if exam_files:
-            exam_text = "\n".join([extract_text_from_file(file) for file in exam_files])
-            st.session_state.exam_format = extract_exam_format(exam_text, llm)
-        else:
-            st.session_state.exam_format = "객관식과 주관식 문제로 구성된 기본 문제 형식"
+        # 선택적으로 단계 실행
+        if create_summary:
+            st.session_state.summary = {
+                file_name: summarize_text([chunk], llm)
+                for file_name, chunk in zip(st.session_state.uploaded_text.keys(), text_chunks)
+            }
+        if create_roadmap:
+            st.session_state.roadmap = create_study_roadmap(
+                "\n".join(st.session_state.summary.values()), llm, days_left
+            )
+        if create_quiz:
+            st.session_state.quiz = generate_quiz_questions(
+                "\n".join(st.session_state.summary.values()), llm
+            )
 
-        # 예상 문제 생성
-        st.session_state.quiz = generate_quiz_questions(
-            st.session_state.summary,
-            st.session_state.exam_format,
-            llm
-        )
-
-    # 메인 화면 출력
-    st.subheader("📌 강의자료 요약")
-    if st.session_state.summary:
-        st.markdown(st.session_state.summary)
-    else:
-        st.info("강의자료를 업로드하고 요약 결과를 확인하세요.")
-
-    st.subheader("📋 기출문제 형식")
-    if st.session_state.exam_format:
-        st.markdown(st.session_state.exam_format)
-    else:
-        st.info("기출문제를 업로드하면 형식을 분석하여 표시합니다.")
-
-    st.subheader("❓ 예상 문제")
-    if st.session_state.quiz:
-        st.markdown(st.session_state.quiz)
-    else:
-        st.info("예상 문제를 생성하려면 강의자료와 기출문제를 업로드하세요.")
+    if st.session_state.uploaded_text:
+        if create_summary and selected_files:
+            st.subheader("📌 핵심 요약")
+            for selected_file in selected_files:
+                st.markdown(f"**파일명: {selected_file}**")
+                st.markdown(st.session_state.summary[selected_file].replace("\n", "\n\n"))
+        if create_roadmap:
+            st.subheader("📋 공부 로드맵")
+            st.markdown(st.session_state.roadmap)
+        if create_quiz:
+            st.subheader("❓ 예상 문제")
+            st.markdown(st.session_state.quiz)
 
 if __name__ == "__main__":
     main()
