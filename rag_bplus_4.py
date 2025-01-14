@@ -164,5 +164,20 @@ def refine_summary(summaries, llm):
     response = llm(messages)
     return response.content
 
+# 요약 성능 평가 함수
+def evaluate_summary(original_text, generated_summary):
+    scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
+    
+    # 원본 텍스트 전체를 하나로 결합
+    original_text_combined = "\n".join([doc.page_content for doc in original_text])
+    
+    # ROUGE 점수 계산
+    scores = scorer.score(original_text_combined, generated_summary)
+    return {
+        "ROUGE-1": scores['rouge1'].fmeasure,
+        "ROUGE-2": scores['rouge2'].fmeasure,
+        "ROUGE-L": scores['rougeL'].fmeasure
+    }
+
 if __name__ == "__main__":
     main()
