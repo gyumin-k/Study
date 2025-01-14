@@ -139,9 +139,29 @@ def split_text_into_chunks(text):
 def summarize_text(text_chunks, llm, max_summary_length=2000):
     def process_chunk(chunk):
         text = chunk.page_content
+        detected_languages = detect_langs(text)
+        if any(lang.lang == "ko" and lang.prob > 0.5 for lang in detected_languages):
+            system_prompt = "당신은 유능한 한국어 요약 도우미입니다."
+            human_prompt = f"""
+            다음 텍스트를 한국어로 요약해주세요:
+            1. 핵심 주제만 간결히 포함
+            2. 중요 키워드를 강조
+            3. 불필요한 정보 및 중복 제거
+            텍스트:\n\n{text}
+            """
+        else:
+            system_prompt = "You are a skilled English summarization assistant."
+            human_prompt = f"""
+            Please summarize the following text in English:
+            1. Include only the main points
+            2. Highlight important keywords
+            3. Remove unnecessary details and redundancy
+            Text:\n\n{text}
+            """
+        
         messages = [
-            SystemMessage(content="당신은 유능한 한국어 요약 도우미입니다."),
-            HumanMessage(content=f"다음 텍스트를 한국어로 요약해주세요:\n\n{text}")
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=human_prompt)
         ]
         response = llm(messages)
         return response.content
@@ -149,8 +169,15 @@ def summarize_text(text_chunks, llm, max_summary_length=2000):
     with ThreadPoolExecutor(max_workers=4) as executor:
         summaries = list(executor.map(process_chunk, text_chunks))
     
+    # 병렬 처리된 요약문 결합 및 후처리
     combined_summary = "\n".join(summaries)
-    return combined_summary[:max_summary_length] + "..." if len(combined_summary) > max_summary_length else combined_summary
+    messages = [
+        SystemMessage(content="당신은 요약문을 정리하는 도우미입니다."),
+        HumanMessage(content=f"다음 요약문을 간결하고 일관되게 정리해주세요:\n\n{combined_summary}")
+    ]
+    response = llm(messages)
+    return response.content[:max_summary_length] + "..." if len(response.content) > max_summary_length else response.content
+
 
 
 # 공부 로드맵 생성
