@@ -4,11 +4,8 @@ import streamlit as st
 from concurrent.futures import ThreadPoolExecutor
 from langchain.document_loaders import PyPDFLoader, Docx2txtLoader, UnstructuredPowerPointLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import FAISS
 from langchain.chat_models import ChatOpenAI
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
-from datetime import datetime
 from rouge_score import rouge_scorer
 from langdetect import detect_langs
 
@@ -81,6 +78,31 @@ def main():
         st.subheader("❓ 예상 문제")
         st.markdown(st.session_state.quiz)
 
+# 텍스트 추출 함수
+def extract_text_from_files(files):
+    doc_list = []
+    for file in files:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".tmp") as tmp_file:
+            tmp_file.write(file.read())
+            temp_file_path = tmp_file.name
+
+        if file.name.endswith(".pdf"):
+            loader = PyPDFLoader(temp_file_path)
+        elif file.name.endswith(".docx"):
+            loader = Docx2txtLoader(temp_file_path)
+        elif file.name.endswith(".pptx"):
+            loader = UnstructuredPowerPointLoader(temp_file_path)
+        else:
+            st.warning(f"지원하지 않는 파일 형식입니다: {file.name}")
+            continue
+
+        documents = loader.load_and_split()
+        doc_list.extend(documents)
+
+        # 임시 파일 삭제
+        os.remove(temp_file_path)
+    return doc_list
+
 # 병렬 처리된 요약문 후처리 함수
 def refine_summary(summaries, llm):
     combined_summary = "\n".join(summaries)
@@ -91,7 +113,13 @@ def refine_summary(summaries, llm):
     response = llm(messages)
     return response.content
 
-# 기타 함수는 기존 코드 그대로 유지
+# 텍스트 청크로 분할
+def split_text_into_chunks(text):
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1500,
+        chunk_overlap=300
+    )
+    return text_splitter.split_documents(text)
 
 if __name__ == "__main__":
     main()
