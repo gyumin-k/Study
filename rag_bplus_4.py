@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from langchain.document_loaders import PyPDFLoader, Docx2txtLoader, UnstructuredPowerPointLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import FAISS
 from langchain.chat_models import ChatOpenAI
 from langchain.schema import AIMessage, HumanMessage, SystemMessage, Document
 from datetime import datetime
@@ -119,6 +120,13 @@ def main():
         exam_date = st.date_input("📅 시험 날짜를 선택하세요")
         process_button = st.button("🚀 벼락치기 시작하기")
 
+        # 멀티셀렉트로 요약 확인할 파일 선택
+        selected_files = st.multiselect(
+            "📂 요약을 확인할 파일을 선택하세요:",
+            options=list(st.session_state.summary.keys()),
+            help="업로드한 파일 중에서 요약을 보고 싶은 파일을 선택하세요."
+        )
+
     if process_button:
         if not openai_api_key:
             st.warning("OpenAI API 키를 입력해주세요!")
@@ -144,13 +152,13 @@ def main():
         lecture_chunks = split_text_into_chunks(st.session_state.lecture_text)
         llm = ChatOpenAI(openai_api_key=openai_api_key, model_name="gpt-4")
 
-        # 요약 생성
-        st.session_state.summary = summarize_text(lecture_chunks, llm)
+        # 요약 생성 (파일별로 저장)
+        for file_name, chunk in zip(st.session_state.lecture_text.keys(), lecture_chunks):
+            st.session_state.summary[file_name] = summarize_text([chunk], llm)
 
-        # 공부 로드맵 생성
-        st.session_state.roadmap = create_study_roadmap(
-            st.session_state.summary, llm, days_left
-        )
+        # 공부 로드맵 생성 (전체 요약을 기반으로)
+        combined_summary = "\n".join(st.session_state.summary.values())
+        st.session_state.roadmap = create_study_roadmap(combined_summary, llm, days_left)
 
         # 예상 문제 생성
         if st.session_state.exam_text:  # 기출문제가 있는 경우
@@ -163,8 +171,13 @@ def main():
 
     # 결과 출력
     if st.session_state.summary:
-        st.subheader("📌 핵심 요약")
-        st.markdown(st.session_state.summary)
+        st.subheader("📌 파일별 요약")
+        if selected_files:  # 선택된 파일의 요약만 출력
+            for file_name in selected_files:
+                st.markdown(f"**파일명: {file_name}**")
+                st.markdown(st.session_state.summary[file_name])
+        else:
+            st.info("요약을 확인할 파일을 선택하세요.")
 
     if st.session_state.roadmap:
         st.subheader("📋 공부 로드맵")
