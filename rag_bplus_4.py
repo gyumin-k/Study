@@ -1,11 +1,10 @@
 import tempfile
 import os
 import streamlit as st
-from concurrent.futures import ThreadPoolExecutor
 from langchain.document_loaders import PyPDFLoader, Docx2txtLoader, UnstructuredPowerPointLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chat_models import ChatOpenAI
-from langchain.schema import SystemMessage, HumanMessage, Document
+from langchain.schema import SystemMessage, HumanMessage
 from datetime import datetime
 
 # Streamlit 페이지 설정
@@ -56,18 +55,25 @@ def extract_exam_format(text, llm):
     return response.content
 
 # 예상 문제 생성
-def generate_quiz_questions(summary, exam_format, llm):
-    messages = [
-        SystemMessage(content="당신은 한국 대학생을 위한 예상 문제를 작성하는 도우미입니다."),
-        HumanMessage(content=f"""
-        다음 요약된 텍스트를 기반으로 예상 문제를 작성해주세요:
-        {summary}
-        문제의 형식은 다음에 맞춰주세요:
-        {exam_format}
-        """)
-    ]
-    response = llm(messages)
-    return response.content
+def generate_quiz_questions(summary, exam_format, llm, max_chunk_size=2000):
+    # 텍스트를 청크로 분할
+    chunks = [summary[i:i + max_chunk_size] for i in range(0, len(summary), max_chunk_size)]
+    quiz_results = []
+
+    for chunk in chunks:
+        messages = [
+            SystemMessage(content="당신은 한국 대학생을 위한 예상 문제를 작성하는 도우미입니다."),
+            HumanMessage(content=f"""
+            다음 요약된 텍스트를 기반으로 예상 문제를 작성해주세요:
+            {chunk}
+            문제의 형식은 다음에 맞춰주세요:
+            {exam_format}
+            """)
+        ]
+        response = llm(messages)
+        quiz_results.append(response.content)
+
+    return "\n\n".join(quiz_results)
 
 # Streamlit 앱
 def main():
@@ -116,7 +122,7 @@ def main():
             exam_text = "\n".join([extract_text_from_file(file) for file in exam_files])
             st.session_state.exam_format = extract_exam_format(exam_text, llm)
         else:
-            st.session_state.exam_format = "객관식과 주관식 문제로 구성된 일반적인 문제지 형식"
+            st.session_state.exam_format = "객관식과 주관식 문제로 구성된 기본 문제 형식"
 
         # 예상 문제 생성
         st.session_state.quiz = generate_quiz_questions(
